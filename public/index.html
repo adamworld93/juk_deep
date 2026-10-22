@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#05070a">
+  <title>DEEP</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛏</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="crt"></div>
+
+  <div id="menu" class="screen">
+    <div class="menu-card">
+      <pre class="logo">
+██████╗ ███████╗███████╗██████╗
+██╔══██╗██╔════╝██╔════╝██╔══██╗
+██║  ██║█████╗  █████╗  ██████╔╝
+██║  ██║██╔══╝  ██╔══╝  ██╔═══╝
+██████╔╝███████╗███████╗██║
+╚═════╝ ╚══════╝╚══════╝╚═╝</pre>
+      <pre id="scene" aria-hidden="true"></pre>
+      <p class="tag">&gt; the earth is a resource. so are you.<span class="cursor">_</span></p>
+      <input id="name" maxlength="14" placeholder="miner name" autocomplete="off" spellcheck="false">
+      <input id="pin" maxlength="4" inputmode="numeric" placeholder="4-digit PIN (keeps your progress)" autocomplete="off">
+      <div class="modes">
+        <button id="play-solo" class="mode">
+          <b>▼ STORY</b>
+          <span>a private descent · characters · three endings</span>
+        </button>
+        <button id="play-world" class="mode">
+          <b>◆ THE COMMONS</b>
+          <span id="commons-info">one shared mine · everyone digs together</span>
+        </button>
+      </div>
+      <button id="host" class="ghost">big screen view (commons)</button>
+      <p id="menu-error"></p>
+      <p class="help desktop-only">WASD/arrows dig · hold ↑ to fly (+ ←/→ to steer) · F use / talk · 1-4 items · T chat · M music</p>
+      <p class="help touch-only">D-pad to dig · hold ▲ to fly, add ◄/► to steer · F to use / talk</p>
+    </div>
+  </div>
+
+  <div id="dialog" class="hidden">
+    <pre id="dlg-portrait"></pre>
+    <div class="dlg-body">
+      <div id="dlg-name"></div>
+      <div id="dlg-text"></div>
+      <div id="dlg-choices" class="hidden"></div>
+      <div id="dlg-hint" class="hidden">▼ space / tap</div>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="top">
+      <span id="depth">▼ 0m</span>
+      <span id="money">$0</span>
+      <span id="stars"></span>
+      <span id="online"></span>
+      <button id="mute" title="music (M)">♪</button>
+    </div>
+    <pre id="bars"></pre>
+    <div id="rush" class="hidden"></div>
+    <div id="toast"></div>
+    <div id="feed"></div>
+    <form id="chat-form" class="hidden"><input id="chat" maxlength="80" placeholder="say something… (Enter)" autocomplete="off"></form>
+    <div id="panel" class="hidden"></div>
+    <div id="lb" class="hidden"></div>
+    <div id="items"></div>
+    <div id="dpad">
+      <button data-d="U">▲</button>
+      <button data-d="L">◄</button>
+      <button data-d="R">►</button>
+      <button data-d="D">▼</button>
+    </div>
+    <div id="touch-extra">
+      <button id="btn-act">F</button>
+      <button id="btn-chat">💬</button>
+      <button id="btn-lb">🏆</button>
+    </div>
+  </div>
+
+  <div id="hostpanel" class="hidden">
+    <pre class="logo small">
+█▀▄ █▀▀ █▀▀ █▀█
+█▄▀ ██▄ ██▄ █▀▀</pre>
+    <img id="qr" alt="Join QR code">
+    <div id="join-url"></div>
+    <div id="host-online"></div>
+    <div class="cols">
+      <div><h3>DEEPEST</h3><ol id="host-deep"></ol></div>
+      <div><h3>RICHEST</h3><ol id="host-rich"></ol></div>
+    </div>
+    <h3>MARKET</h3>
+    <div id="host-market"></div>
+    <h3>LOG</h3>
+    <div id="host-feed"></div>
+    <button id="host-reset" class="ghost hidden">⚠ reset the world</button>
+  </div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
