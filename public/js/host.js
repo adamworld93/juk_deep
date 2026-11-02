@@ -1,4 +1,3 @@
-// Big-screen overview: the whole mine as a pixel cross-section with every miner on it.
 import * as C from '/shared/config.js';
 
 const { W, H, SURFACE, T, TILES } = C;
@@ -60,7 +59,6 @@ export class HostView {
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.buf, 0, 0, W, shown, ox, oy, W * scale, shown * scale);
 
-    // Depth ruler
     ctx.font = `11px ${FONT}`;
     ctx.fillStyle = '#5f8a6c';
     ctx.textAlign = 'right';

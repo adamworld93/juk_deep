@@ -1,4 +1,3 @@
-// HTTP (static files, QR codes, info) + WebSocket server for DEEP.
 import http from 'node:http';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -23,10 +22,8 @@ function lanUrls() {
     .map((n) => `http://${n.address}:${PORT}`);
 }
 
-// THE COMMONS: one shared multiplayer world.
 const game = new Game({ saveFile: path.join(DATA_DIR, 'world.json') });
 
-// STORY: one private world per miner, loaded on demand and unloaded when they leave.
 const solos = new Map();
 function soloFor(name) {
   const key = String(name ?? '').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 14).toLowerCase();
@@ -64,9 +61,10 @@ function originOf(req) {
 async function serveStatic(pathname, req, res) {
   for (const [prefix, dir] of STATIC) {
     if (!pathname.startsWith(prefix)) continue;
-    const rel = decodeURIComponent(pathname.slice(prefix.length)) || 'index.html';
+    let rel;
+    try { rel = decodeURIComponent(pathname.slice(prefix.length)) || 'index.html'; } catch { break; } // malformed %-escape
     const file = path.join(dir, path.normalize(rel));
-    if (!file.startsWith(dir)) break;
+    if (!file.startsWith(dir + path.sep)) break;
     try {
       let body = await fs.readFile(file);
       // A <base> tag keeps every asset + API URL pointing here even if the page is loaded from another origin.
@@ -80,7 +78,15 @@ async function serveStatic(pathname, req, res) {
   res.end('not found');
 }
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer((req, res) => {
+  handle(req, res).catch((e) => {
+    console.error('request failed:', req.url, e);
+    if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' });
+    res.end('server error');
+  });
+});
+
+async function handle(req, res) {
   for (const [k, v] of Object.entries(CORS)) res.setHeader(k, v);
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   const url = new URL(req.url, 'http://localhost');
@@ -101,10 +107,9 @@ const server = http.createServer(async (req, res) => {
   } else {
     await serveStatic(url.pathname, req, res);
   }
-});
+}
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: { threshold: 1024 } });
-// Route each connection to the Commons or to the player's own story world on its first message.
 wss.on('connection', (ws) => {
   const conn = { ws, player: null, host: false, chunks: new Set(), joined: false };
   let target = null;
@@ -112,12 +117,18 @@ wss.on('connection', (ws) => {
     let m;
     try { m = JSON.parse(data); } catch { return; }
     if (!m || typeof m !== 'object') return;
-    if (target) return target.onMessage(conn, m);
-    if (m.t !== 'join') return;
-    const g = m.mode === 'solo' && !m.host ? soloFor(m.name) : game;
-    if (!g) return ws.send(JSON.stringify({ t: 'error', text: 'Pick a name (2+ characters).' }));
-    g.join(conn, m);
-    if (conn.joined) target = g;
+    try {
+      if (target) return target.onMessage(conn, m);
+      if (m.t !== 'join') return;
+      const g = m.mode === 'solo' && !m.host ? soloFor(m.name) : game;
+      if (!g) return ws.send(JSON.stringify({ t: 'error', text: 'Pick a name (2+ characters).' }));
+      g.join(conn, m);
+      if (conn.joined) target = g;
+      // A failed login (wrong PIN…) must not leave a story world loaded with nobody in it.
+      else if (g !== game && g.conns.size === 0) g.onEmpty?.();
+    } catch (e) {
+      console.error('message failed:', m?.t, e);
+    }
   });
   ws.on('close', () => target?.leave(conn));
   ws.on('error', () => {});

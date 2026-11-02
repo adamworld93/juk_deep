@@ -1,15 +1,18 @@
-// DOM HUD: stats bars, building panels (fuel / market / shop), items, feed, leaderboard, host panel.
 import * as C from '/shared/config.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 const fmt = (n) => Math.floor(n).toLocaleString('en');
 const setHtml = (el, html) => { if (el._html !== html) { el._html = html; el.innerHTML = html; } };
+export const KEEPSAKES = {
+  tomas: 'Tomas’s letter', home: 'letter home', stone: 'a stone for Jo',
+  jostone: 'Jo’s stone', drawing: 'Jo’s drawing', memo: 'Company memo',
+};
 const ORE_DEFS = Object.fromEntries(C.TILES.filter((t) => t.ore).map((t) => [t.key, t]));
 
 const bar = (v, max, n = 14) => {
   const k = Math.max(0, Math.min(n, Math.round((v / max) * n)));
-  return `[${'█'.repeat(k)}${'░'.repeat(n - k)}]`;
+  return `${'█'.repeat(k)}<span class="dim">${'░'.repeat(n - k)}</span>`;
 };
 
 export function statsOf(me) {
@@ -34,6 +37,7 @@ export class UI {
       if (!b || b.disabled) return;
       const msg = { t: b.dataset.a };
       if (b.dataset.k) msg.k = b.dataset.k;
+      if (msg.t === 'lift') msg.to = Number(b.dataset.k);
       actions.send(msg);
     });
     $('items').addEventListener('click', (e) => {
@@ -53,8 +57,13 @@ export class UI {
   addFeed(html, kind = 'info') {
     this.feedLines.push({ html, kind });
     if (this.feedLines.length > 8) this.feedLines.shift();
-    setHtml($('feed'), this.feedLines.map((f) => `<div class="k-${f.kind}">${f.html}</div>`).join(''));
-    if (this.host) this.renderHostFeed();
+    if (this.host) return this.renderHostFeed();
+    const el = document.createElement('div');
+    el.className = `k-${kind}`;
+    el.innerHTML = html;
+    $('feed').append(el);
+    while ($('feed').children.length > 5) $('feed').firstChild.remove();
+    setTimeout(() => el.remove(), 9000);
   }
 
   setMarket(m) {
@@ -66,32 +75,37 @@ export class UI {
     $('lb').classList.toggle('hidden', force === undefined ? undefined : !force);
   }
 
-  // Called ~10×/s with the current client state.
   update(S) {
     if (S.host) return this.updateHost(S);
     const me = S.me;
     if (!me) return;
     const st = statsOf(me), self = S.players.get(S.you);
     const y = self?.y ?? 0, depth = C.depthOf(y), layer = C.layerOf(depth);
-    setHtml($('depth'), y < C.SURFACE ? '▲ surface' : `▼ ${depth}m · ${layer.name}`);
+    setHtml($('depth'), y < C.SURFACE ? '▲ SURFACE' : `▼ ${depth}m <span class="dim">· ${layer.name}</span>`);
     setHtml($('money'), `$${fmt(me.m)}`);
     setHtml($('stars'), me.s ? '★'.repeat(Math.min(me.s, 5)) + (me.s > 5 ? `×${me.s}` : '') : '');
-    setHtml($('online'), S.mode === 'solo' ? '· story ·' : `${S.players.size} online`);
+    setHtml($('online'), S.mode === 'solo' ? '' : `${S.players.size} online`);
 
     const cargo = Object.values(me.c).reduce((s, n) => s + n, 0);
     const lowFuel = me.f < st.tank * 0.25;
+    const story = S.mode === 'solo';
+    setHtml($('debt'), story && me.debt > 0 ? `owes $${fmt(me.debt)}` : '');
+    setHtml($('worker'), story && me.wk > 1 ? `employee #${me.wk}` : '');
+    const body = 100 - (me.t ?? 0);
     setHtml($('bars'), [
-      `<span class="f ${lowFuel ? 'warn' : ''}">FUEL  ${bar(me.f, st.tank)} ${Math.floor(me.f)}/${st.tank}</span>`,
-      `<span class="h ${me.h < st.hull * 0.3 ? 'warn' : ''}">HULL  ${bar(me.h, st.hull)} ${me.h}/${st.hull}</span>`,
-      `<span class="c ${cargo >= st.cargo ? 'warn' : ''}">CARGO ${bar(cargo, st.cargo)} ${cargo}/${st.cargo}</span>`,
+      `<span class="f ${lowFuel ? 'warn' : ''}">fuel  ${bar(me.f, st.tank, 12)} ${Math.floor(me.f)}</span>`,
+      `<span class="h ${me.h < st.hull * 0.3 ? 'warn' : ''}">hull  ${bar(me.h, st.hull, 12)} ${me.h}</span>`,
+      `<span class="c ${cargo >= st.cargo ? 'warn' : ''}">cargo ${bar(cargo, st.cargo, 12)} ${cargo}/${st.cargo}</span>`,
+      ...(story ? [`<span class="b ${body < 25 ? 'warn' : ''}">body  ${bar(body, 100, 12)} ${body < 25 ? 'spent' : body < 55 ? 'weary' : 'ok'}</span>`] : []),
     ].join('\n'));
 
     const touch = document.body.classList.contains('touch');
     const underground = y >= C.SURFACE;
-    setHtml($('items'), C.ITEM_KEYS.map((k) => {
-      const it = C.ITEMS[k], n = me.i[k] ?? 0;
-      return `<button data-item="${k}" ${n ? '' : 'disabled'}>${touch ? '' : `<b>${it.key}</b> `}${it.name.toLowerCase()} ×${n}</button>`;
-    }).join('') + (underground ? `<button data-item="rescue">${touch ? '' : '<b>R</b> '}rescue</button>` : ''));
+    setHtml($('items'), C.ITEM_KEYS.filter((k) => me.i[k] > 0).map((k) => {
+      const it = C.ITEMS[k];
+      return `<button data-item="${k}">${touch ? '' : `<b>${it.key}</b>`}${it.name.toLowerCase()} ×${me.i[k]}</button>`;
+    }).join('') + (underground ? `<button data-item="rescue">${touch ? '' : '<b>R</b> '}rescue</button>` : '')
+      + (me.k ?? []).map((k) => `<button class="keep" data-item="keep:${k}">${k === 'tomas' || k === 'home' ? '✉' : '·'} ${KEEPSAKES[k] ?? 'something'}</button>`).join(''));
 
     const rush = this.market?.rush;
     $('rush').classList.toggle('hidden', !rush);
@@ -102,17 +116,27 @@ export class UI {
   }
 
   updatePanel(S, me, st, y) {
-    const station = y <= C.SURFACE - 1 ? C.stationAt(S.players.get(S.you)?.x ?? -99) : null;
-    $('panel').classList.toggle('hidden', !station);
-    if (!station) return;
-    const btn = (a, label, enabled = true, k = '', cls = '') => `<button data-a="${a}" ${k ? `data-k="${k}"` : ''} class="${cls}" ${enabled ? '' : 'disabled'}>${label}</button>`;
+    const self = S.players.get(S.you);
+    const station = y <= C.SURFACE - 1 ? C.stationAt(self?.x ?? -99) : null;
+    const lift = self ? C.liftStopAt(self.x, self.y) : null;
+    $('panel').classList.toggle('hidden', !station && lift === null);
+    const eco = C.economy(S.mode === 'solo' ? me.df : 'normal');
+    const btn = (a, label, enabled = true, k = '', cls = '') => `<button data-a="${a}" ${k !== '' ? `data-k="${k}"` : ''} class="${cls}" ${enabled ? '' : 'disabled'}>${label}</button>`;
+    if (!station) {
+      if (lift !== null) setHtml($('panel'), this.liftPanel(S, me, lift, btn, eco));
+      return;
+    }
     let html = '';
     if (station.key === 'fuel') {
-      const need = st.tank - me.f, cost = Math.ceil(need * C.FUEL_PRICE);
+      const need = st.tank - me.f, cost = Math.ceil(need * eco.fuel);
+      // Mirrors the server: broke with a near-empty tank gets an advance instead of a dead end.
+      const broke = me.f < st.tank * 0.25 && me.m < eco.fuel * st.tank * 0.25;
       html = `<h2>⛽ FUEL PUMP</h2>
         <div class="row"><span>Tank</span><span>${Math.floor(me.f)} / ${st.tank}</span></div>
-        <div class="row"><span>Price</span><span>$${C.FUEL_PRICE} / unit</span></div>
-        ${btn('fuel', need < 1 ? 'TANK FULL' : `[F] REFUEL — $${fmt(Math.min(cost, me.m))}`, need >= 1 && me.m > 0, '', 'primary')}`;
+        <div class="row"><span>Price</span><span>$${eco.fuel} / unit</span></div>
+        ${broke
+          ? btn('fuel', S.mode === 'solo' ? '[F] FUEL ADVANCE — on credit' : '[F] EMERGENCY FUEL — free', true, '', 'primary')
+          : btn('fuel', need < 1 ? 'TANK FULL' : `[F] REFUEL — $${fmt(Math.min(cost, me.m))}`, need >= 1 && me.m > 0, '', 'primary')}`;
     } else if (station.key === 'sell') {
       const p = this.market?.p ?? {};
       const bonus = 1 + C.REBIRTH_BONUS * me.s;
@@ -136,11 +160,11 @@ export class UI {
         const vals = k === 'drill' ? U.speed : U.value;
         const next = max ? '' : ` → ${k === 'drill' ? `${vals[lvl + 1]}× (hardness ${U.power[lvl + 1]})` : vals[lvl + 1]}`;
         return `<div class="row"><span>${U.name} <span class="lvl">Lv${lvl + 1}</span><br><span class="sub">${k === 'drill' ? `${vals[lvl]}× · hardness ${U.power[lvl]}` : vals[lvl]}${next}</span></span>
-          ${btn('upgrade', max ? 'MAX' : `$${fmt(U.cost[lvl + 1])}`, !max && me.m >= U.cost[lvl + 1], k)}</div>`;
+          ${btn('upgrade', max ? 'MAX' : `$${fmt(eco.upgrade(k, lvl + 1))}`, !max && me.m >= eco.upgrade(k, lvl + 1), k)}</div>`;
       }).join('');
       const items = C.ITEM_KEYS.map((k) => {
         const it = C.ITEMS[k];
-        return `<div class="row"><span>${it.name} <span class="lvl">×${me.i[k] ?? 0}</span><br><span class="sub">${it.desc}</span></span>${btn('buy', `$${it.price}`, me.m >= it.price, k)}</div>`;
+        return `<div class="row"><span>${it.name}${it.qty ? ` ×${it.qty}` : ''} <span class="lvl">have ${me.i[k] ?? 0}</span><br><span class="sub">${it.desc}</span></span>${btn('buy', `$${eco.item(k)}`, me.m >= eco.item(k), k)}</div>`;
       }).join('');
       const dmg = st.hull - me.h;
       const repair = `<div class="row"><span>Repair hull <span class="lvl">${me.h}/${st.hull}</span></span>${btn('repair', dmg > 0 ? `[F] $${fmt(Math.min(dmg * C.REPAIR_PRICE, me.m))}` : 'OK', dmg > 0 && me.m > 0)}</div>`;
@@ -152,13 +176,24 @@ export class UI {
     setHtml($('panel'), html);
   }
 
+  liftPanel(S, me, here, btn, eco) {
+    const stops = [0, ...C.LIFT_STOPS.filter((d) => d <= me.r)].filter((d) => d !== here);
+    const rows = stops.map((d, i) => {
+      const fare = eco.fare(here, d), def = here === 0 ? d === stops.at(-1) : d === 0;
+      const label = `${d === 0 ? '▲ TOWN' : `${d > here ? '▼' : '▲'} ${d}m`} — $${fare}`;
+      return btn('lift', def ? `[F] ${label}` : label, true, String(d), def ? 'primary' : 'lift');
+    }).join('');
+    const sub = here === 0 ? 'Down the shaft to any landing you have reached.' : `Landing ${here}m. Your cargo rides with you.`;
+    return `<h2>⛓ COMPANY LIFT</h2><div class="sub">${sub}${S.mode === 'solo' ? ' Fares on credit cost double.' : ''}</div>
+      ${rows || `<div class="sub" style="margin-top:8px">The first landing opens once you have been ${C.LIFT.every}m down.</div>`}`;
+  }
+
   renderLb() {
     if (!this.lb || $('lb').classList.contains('hidden')) return;
     const li = ([name, v, stars, on], unit) => `<li class="${on ? 'on' : ''}">${esc(name)}${stars ? ` <span style="color:#ff8af0">★${stars}</span>` : ''} — ${unit === '$' ? `$${fmt(v)}` : `${v}m`}</li>`;
     setHtml($('lb'), `<h3>DEEPEST</h3><ol>${this.lb.deep.map((r) => li(r, 'm')).join('')}</ol><h3>RICHEST</h3><ol>${this.lb.rich.map((r) => li(r, '$')).join('')}</ol>`);
   }
 
-  // ---------- host ----------
 
   updateHost(S) {
     this.host = true;

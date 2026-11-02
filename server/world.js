@@ -1,4 +1,3 @@
-// The shared underground: procedural generation, tile access, change tracking, chunk encoding.
 import { W, H, SURFACE, CHUNK, T, TILES, LAYERS, TOWN, tileByKey, depthOf, layerOf } from '../shared/config.js';
 
 function mulberry32(a) {
@@ -10,7 +9,6 @@ function mulberry32(a) {
   };
 }
 
-// Smooth 2D value noise in [0,1).
 function makeNoise(seed) {
   const hash = (x, y) => {
     let h = (x * 374761393 + y * 668265263 + seed * 2147483647) | 0;
@@ -69,7 +67,6 @@ export class World {
       }
     }
 
-    // Random-walk blobs inside a depth band.
     const blob = (d0, d1, len, fill, canReplace) => {
       let x = Math.floor(R(2, W - 2)), y = SURFACE + 1 + Math.floor(R(d0, d1));
       for (let i = 0; i < len; i++) {
@@ -81,7 +78,6 @@ export class World {
     let d0 = 1;
     for (const layer of LAYERS) {
       const d1 = Math.min(layer.to, H - SURFACE - 2), area = (d1 - d0) * W;
-      // Caves first, so ore can line their walls.
       for (let i = 0; i < area / 2500; i++) blob(d0 + 4, d1, Math.floor(R(25, 70)), () => T.AIR, (v) => PLAIN_ROCK.has(v));
       for (const [ore, pct] of Object.entries(layer.ores)) {
         for (let i = 0; i < (area * pct) / 100 / 5; i++) blob(d0, d1, Math.floor(R(3, 9)), () => tileByKey[ore], (v) => PLAIN_ROCK.has(v));
@@ -99,7 +95,6 @@ export class World {
     return this;
   }
 
-  // Sprinkle fresh ore into untouched rock between two depths (keeps the shallow grind alive).
   reseed(d0, d1, count) {
     let placed = 0;
     for (let i = 0; i < count * 20 && placed < count; i++) {

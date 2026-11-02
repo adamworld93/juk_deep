@@ -25,13 +25,30 @@
 ██████╔╝███████╗███████╗██║
 ╚═════╝ ╚══════╝╚══════╝╚═╝</pre>
       <pre id="scene" aria-hidden="true"></pre>
-      <p class="tag">&gt; the earth is a resource. so are you.<span class="cursor">_</span></p>
+      <p class="tag" id="tag">&gt; the earth is a resource. so are you.<span class="cursor">_</span></p>
       <input id="name" maxlength="14" placeholder="miner name" autocomplete="off" spellcheck="false">
       <input id="pin" maxlength="4" inputmode="numeric" placeholder="4-digit PIN (keeps your progress)" autocomplete="off">
+      <details id="custom">
+        <summary>customize your miner</summary>
+        <div class="custom-body">
+          <div class="look-preview">
+            <pre id="look-portrait"></pre>
+            <canvas id="look-sprite" width="160" height="160"></canvas>
+          </div>
+          <div class="look-controls">
+            <div class="look-row"><span>helmet</span><button data-l="hat" data-d="-1">◄</button><b id="look-hat"></b><button data-l="hat" data-d="1">►</button></div>
+            <div class="look-row"><span>face</span><button data-l="face" data-d="-1">◄</button><b id="look-face"></b><button data-l="face" data-d="1">►</button></div>
+            <div class="look-row"><span>outfit</span><button data-l="body" data-d="-1">◄</button><b id="look-body"></b><button data-l="body" data-d="1">►</button></div>
+            <div id="look-colors"></div>
+            <button id="look-random" class="ghost">⚄ randomize</button>
+          </div>
+        </div>
+      </details>
+      <div class="lengths" id="lengths" title="How long the story takes. Applies to a new story."></div>
       <div class="modes">
         <button id="play-solo" class="mode">
           <b>▼ STORY</b>
-          <span>a private descent · characters · three endings</span>
+          <span>a private descent · characters · four endings</span>
         </button>
         <button id="play-world" class="mode">
           <b>◆ THE COMMONS</b>
@@ -40,15 +57,30 @@
       </div>
       <button id="host" class="ghost">big screen view (commons)</button>
       <p id="menu-error"></p>
-      <p class="help desktop-only">WASD/arrows dig · hold ↑ to fly (+ ←/→ to steer) · F use / talk · 1-4 items · T chat · M music</p>
+      <p class="help desktop-only">WASD/arrows walk &amp; dig · hold ↑ to climb or fly · F use / talk · 1-5 items · Esc settings</p>
       <p class="help touch-only">D-pad to dig · hold ▲ to fly, add ◄/► to steer · F to use / talk</p>
     </div>
+  </div>
+
+  <div id="act-card" class="hidden">
+    <div class="act-rule">─────────────── ◇ ───────────────</div>
+    <div id="act-num"></div>
+    <div id="act-title"></div>
+    <div class="act-rule">─────────────── ◇ ───────────────</div>
+    <div class="act-hint">press space / tap</div>
+  </div>
+
+  <div id="payslip" class="hidden"><pre id="payslip-text"></pre></div>
+
+  <div id="obit" class="hidden">
+    <pre id="obit-text"></pre>
+    <button id="obit-go">[ continue ]</button>
   </div>
 
   <div id="dialog" class="hidden">
     <pre id="dlg-portrait"></pre>
     <div class="dlg-body">
-      <div id="dlg-name"></div>
+      <div class="dlg-head"><canvas id="dlg-sprite" width="140" height="70"></canvas><div id="dlg-name"></div></div>
       <div id="dlg-text"></div>
       <div id="dlg-choices" class="hidden"></div>
       <div id="dlg-hint" class="hidden">▼ space / tap</div>
@@ -56,14 +88,13 @@
   </div>
 
   <div id="hud" class="hidden">
-    <div id="top">
-      <span id="depth">▼ 0m</span>
-      <span id="money">$0</span>
-      <span id="stars"></span>
-      <span id="online"></span>
-      <button id="mute" title="music (M)">♪</button>
+    <div id="stats">
+      <div id="depth">▼ 0m</div>
+      <div class="money-row"><span id="money">$0</span><span id="stars"></span><span id="debt"></span></div>
+      <pre id="bars"></pre>
+      <div id="worker"></div>
     </div>
-    <pre id="bars"></pre>
+    <div id="top-right"><span id="online"></span><button id="settings-btn" title="settings (Esc)">⚙</button></div>
     <div id="rush" class="hidden"></div>
     <div id="toast"></div>
     <div id="feed"></div>
@@ -81,6 +112,36 @@
       <button id="btn-act">F</button>
       <button id="btn-chat">💬</button>
       <button id="btn-lb">🏆</button>
+    </div>
+  </div>
+
+  <div id="settings" class="hidden">
+    <div class="set-card">
+      <h2 id="set-title">SETTINGS</h2>
+      <label class="slider">music <input type="range" id="set-music" min="0" max="100"></label>
+      <label class="slider">sound effects <input type="range" id="set-sfx" min="0" max="100"></label>
+      <label class="tog"><input type="checkbox" id="set-shake"> screen shake</label>
+      <label class="tog"><input type="checkbox" id="set-crt"> CRT scanlines</label>
+      <label class="tog commons-only"><input type="checkbox" id="set-feed"> event log &amp; chat (bottom left)</label>
+      <details class="set-controls">
+        <summary>controls</summary>
+        <pre>←/→  A/D    walk · dig sideways (walking is free)
+↓    S      dig down
+↑    W      climb a wall or ladder (free)
+            fly through open air (burns fuel)
+F / E       use building · talk
+1 2 3 4 5   dynamite · teleporter · repair · fuel can · ladder
+R ×2        rescue (lose cargo)
+T · L       chat · leaderboard (Commons)
+M           mute
+Esc         this menu</pre>
+      </details>
+      <div class="set-buttons">
+        <button id="set-resume" class="primary">resume</button>
+        <button id="set-leave">leave to menu</button>
+        <button id="set-restart" class="danger story-only">↺ restart story</button>
+      </div>
+      <div class="lengths story-only" id="set-lengths"></div>
     </div>
   </div>
 

@@ -1,0 +1,29 @@
+# Production: DEEP behind Caddy (automatic HTTPS + WebSockets).
+# On the server: create .env with DOMAIN=... and ADMIN_KEY=..., then `docker compose up -d --build`.
+services:
+  deep:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+      - DATA_DIR=/data
+      - PUBLIC_URL=https://${DOMAIN}
+      - ADMIN_KEY=${ADMIN_KEY}
+    volumes:
+      - deep-data:/data
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on:
+      - deep
+volumes:
+  deep-data:
+  caddy-data:

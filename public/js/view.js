@@ -1,6 +1,6 @@
-// ASCII renderer: draws the mine as a character grid with lamp light, fog of war and effects.
 import * as C from '/shared/config.js';
 import { CHARACTERS } from '/shared/story.js';
+import { drawMiner } from './sprite.js';
 
 const { W, H, SURFACE, T, TILES } = C;
 const FONT = '"JetBrains Mono", ui-monospace, Menlo, Consolas, monospace';
@@ -18,10 +18,8 @@ const HEADFRAME = ['   W   ', '  ╱║╲  ', ' ╱ ║ ╲ ', ' ║╲║╱�
 const WHEEL = ['◐', '◓', '◑', '◒'];
 const HEADFRAME_X = W / 2 + 21;
 const SMOKE = ['°', 'o', '·', '.'];
-// Distant mountain skyline height per column.
 const mountain = (x) => Math.floor(1.5 + 2.2 * (Math.sin(x * 0.09) + 1) + 1.6 * (Math.sin(x * 0.23 + 1.3) + 1));
 
-// Darkened tile colors used as the cell background, so terrain reads as solid blocks.
 const BG = TILES.map((t) => {
   const n = parseInt(t.color.slice(1), 16), k = t.ore ? 0.22 : 0.3;
   return `rgb(${((n >> 16) & 255) * k | 0},${((n >> 8) & 255) * k | 0},${(n & 255) * k | 0})`;
@@ -61,7 +59,8 @@ export class AsciiView {
   draw(S, now) {
     const { ctx, dpr, cw, ch } = this;
     const cam = S.cam;
-    const sx0 = (Math.random() - 0.5) * this.shake, sy0 = (Math.random() - 0.5) * this.shake;
+    const shake = this.shake * (this.shakeScale ?? 1);
+    const sx0 = (Math.random() - 0.5) * shake, sy0 = (Math.random() - 0.5) * shake;
     this.shake *= 0.85;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#05070a';
@@ -75,7 +74,6 @@ export class AsciiView {
     const cols = Math.ceil(this.w / cw) + 2, rows = Math.ceil(this.h / ch) + 2;
     const x0 = Math.floor(cam.x - cols / 2), y0 = Math.floor(cam.y - rows / 2);
 
-    // Light sources: your lamp, plus a smaller glow around every other miner.
     const lights = [];
     for (const p of S.players.values()) {
       if (Math.abs(p.rx - cam.x) > cols || Math.abs(p.ry - cam.y) > rows) continue;
@@ -105,14 +103,18 @@ export class AsciiView {
         if (t === T.LAVA) color = (hash(x, y + lavaHot) < 0.5) ? '#ff5a1f' : '#ffa21f';
         const sx = sxOf(x);
         ctx.globalAlpha = L;
-        ctx.fillStyle = BG[t];
-        ctx.fillRect(sx, sy, cw + 0.5, ch + 0.5);
+        if (t !== T.LADDER) { // ladders hang in open space: no block behind them
+          ctx.fillStyle = BG[t];
+          ctx.fillRect(sx, sy, cw + 0.5, ch + 0.5);
+        }
         ctx.fillStyle = color;
         ctx.fillText(def.ch, sx, sy);
       }
     }
     ctx.globalAlpha = 1;
 
+    this.drawCracks(S, sxOf, syOf);
+    this.drawLift(S, sxOf, syOf, y0, rows, now);
     this.drawTown(S, sxOf, syOf, now);
     this.drawMeteor(S, sxOf, syOf, now);
     this.drawWorm(S, sxOf, syOf, now);
@@ -120,6 +122,7 @@ export class AsciiView {
     this.drawPlayers(S, sxOf, syOf, now);
     this.drawFx(S, sxOf, syOf);
 
+    this.drawRide(S, now);
     if (this.hurt > 0.02) {
       ctx.fillStyle = `rgba(255,30,50,${this.hurt * 0.35})`;
       ctx.fillRect(0, 0, this.w, this.h);
@@ -154,7 +157,6 @@ export class AsciiView {
     ctx.globalAlpha = 1;
   }
 
-  // Draw multi-line ASCII art with a solid backdrop so the skyline doesn't show through.
   drawArt(lines, x, y, color, sxOf, syOf, alpha = 1) {
     const { ctx, cw, ch } = this;
     ctx.fillStyle = '#05070a';
@@ -173,7 +175,6 @@ export class AsciiView {
   drawTown(S, sxOf, syOf, now) {
     const { ctx } = this;
     for (const s of C.STATIONS) this.drawArt(BUILDINGS[s.key], s.x - 1, SURFACE - 5, STATION_COLORS[s.key], sxOf, syOf);
-    // Refinery chimney + smoke above the fuel pump.
     const fuel = C.STATIONS.find((s) => s.key === 'fuel'), cx = fuel.x + 6;
     ctx.fillStyle = '#ffcc33';
     ctx.fillText('▌', sxOf(cx), syOf(SURFACE - 6));
@@ -193,24 +194,123 @@ export class AsciiView {
     ctx.globalAlpha = 1;
   }
 
-  drawNpcs(S, sxOf, syOf, now) {
+  drawCracks(S, sxOf, syOf) {
+    const { ctx, cw, ch } = this;
+    ctx.strokeStyle = 'rgba(255,240,210,0.75)';
+    ctx.lineWidth = 1.2;
+    for (const p of S.players.values()) {
+      if (p.act !== 2 || !p.prog) continue;
+      const [dx, dy] = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]][p.dir] ?? [0, 0];
+      const tx = p.x + dx, ty = p.y + dy, x = sxOf(tx), y = syOf(ty);
+      ctx.fillStyle = `rgba(0,0,0,${p.prog * 0.04})`;
+      ctx.fillRect(x, y, cw, ch);
+      ctx.beginPath();
+      for (let k = 0; k < Math.ceil(p.prog / 2); k++) {
+        const h1 = hash(tx * 7 + k, ty * 13), h2 = hash(tx * 3, ty * 5 + k);
+        ctx.moveTo(x + cw * (0.35 + h1 * 0.3), y + ch * (0.35 + h2 * 0.3));
+        ctx.lineTo(x + cw * h2, y + ch * (k % 2 ? h1 : 1 - h1));
+      }
+      ctx.stroke();
+    }
+  }
+
+  drawLabel(text, x, y, color, alpha = 0.85) {
+    const { ctx } = this;
+    ctx.font = `${Math.round(this.size * 0.42)}px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+    ctx.fillText(text, x, y);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = `${this.size}px ${FONT}`;
+  }
+
+  drawLift(S, sxOf, syOf, y0, rows, now) {
+    const { ctx, cw, ch } = this, L = C.LIFT;
+    const open = C.LIFT_STOPS.filter((d) => d <= (S.me?.r ?? 0)), bottom = open.length ? C.liftRow(open.at(-1)) : SURFACE - 1;
+    ctx.fillStyle = '#8f969e';
+    for (let y = Math.max(SURFACE, y0); y < Math.min(bottom, y0 + rows); y++) {
+      if (C.liftStopAt(L.x, y) !== null || S.tiles[y * W + L.x] === T.AIR) continue;
+      ctx.globalAlpha = 0.28;
+      ctx.fillText('¦', sxOf(L.x), syOf(y));
+    }
+    for (const d of C.LIFT_STOPS) {
+      const y = C.liftRow(d);
+      if (y < y0 - 2 || y > y0 + rows || !S.explored[y * W + L.x]) continue;
+      const on = d <= (S.me?.r ?? 0);
+      this.drawLabel(`⛓ LIFT ${d}m`, sxOf(L.x) + cw / 2, syOf(y - 1), on ? '#c9cfd6' : '#5a5f66', on ? 0.85 : 0.6);
+      ctx.globalAlpha = on ? 0.9 : 0.4;
+      ctx.fillStyle = '#8f969e';
+      ctx.fillText('╤', sxOf(L.x + 2) + Math.sin(now / 600) * 1.5, syOf(y - 2));
+      ctx.fillText('▣', sxOf(L.x + 2), syOf(y));
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  drawRide(S, now) {
+    const r = S.ride;
+    if (!r) return;
+    const { ctx } = this, t = (now - r.start) / 1000, fadeIn = 0.35;
+    if (t > r.dur + 0.6) { S.ride = null; return; }
+    const a = t < fadeIn ? t / fadeIn : t > r.dur ? Math.max(0, 1 - (t - r.dur) / 0.6) : 1;
+    const k = Math.min(1, Math.max(0, (t - fadeIn) / (r.dur - fadeIn)));
+    const depth = Math.round(r.from + (r.to - r.from) * k * k * (3 - 2 * k));
+    ctx.globalAlpha = a * 0.94;
+    ctx.fillStyle = '#020304';
+    ctx.fillRect(0, 0, this.w, this.h);
+    ctx.globalAlpha = a;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#c9cfd6';
+    const jig = t < r.dur ? (Math.random() - 0.5) * 2 : 0;
+    ctx.fillText(`⛓  ${r.to < r.from ? '▲' : '▼'}  ${depth === 0 ? 'TOWN' : `${depth}m`}`, this.w / 2 + jig, this.h / 2 - this.ch + jig);
+    if (S.thought && S.thought.until > now) {
+      ctx.font = `italic ${Math.round(this.size * 0.6)}px ${FONT}`;
+      ctx.fillStyle = '#c9d6cc';
+      ctx.globalAlpha = a * 0.85;
+      ctx.fillText(`( ${S.thought.text} )`, this.w / 2, this.h / 2 + this.ch * 0.6);
+      ctx.font = `${this.size}px ${FONT}`;
+    }
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
+
+  drawGlow(x, y, color, now) {
     const { ctx, cw } = this;
+    const r = cw * (3 + Math.sin(now / 700)), g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, color);
+    g.addColorStop(1, 'transparent');
+    ctx.globalAlpha = 0.16 + 0.06 * Math.sin(now / 450);
+    ctx.fillStyle = g;
+    ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    ctx.globalAlpha = 1;
+  }
+
+  drawNpcs(S, sxOf, syOf, now) {
+    const { ctx, cw, ch } = this;
     const self = S.players.get(S.you);
     for (const n of S.npcs ?? []) {
-      if (n.req && (S.me?.ss ?? 0) < (n.req.sells ?? 0)) continue;
-      if (n.y >= SURFACE && !S.explored[n.y * W + n.x]) continue;
+      // Same rules as the server's npcVisible: story progress, a flag that must (not) be set.
+      const r = n.req, fl = S.me?.fl ?? {};
+      if (r && ((S.me?.ss ?? 0) < (r.sells ?? 0) || (r.flag && !fl[r.flag]) || (r.notFlag && fl[r.notFlag]))) continue;
       const c = CHARACTERS[n.npc];
-      let x = n.x;
+      if (n.y >= SURFACE && !S.explored[n.y * W + n.x]) {
+        if (self && Math.hypot(self.x - n.x, self.y - n.y) < 22) this.drawGlow(sxOf(n.x) + cw / 2, syOf(n.y) + ch / 2, c.color, now);
+        continue;
+      }
+      let x = n.x, facing = self && self.x < n.x ? -1 : 1;
       if (n.npc === 'roller') {
-        // He pushes the boulder up the slope… and it rolls back. Forever.
         const k = Math.sin(now / 1600), dir = Math.cos(now / 1600) >= 0 ? 1 : -1;
         x = n.x + Math.round(k * 5);
-        ctx.font = `800 ${this.size}px ${FONT}`;
+        facing = dir;
+        ctx.font = `800 ${Math.round(this.size * 1.4)}px ${FONT}`;
         ctx.fillStyle = '#b9b0a0';
-        ctx.fillText('●', sxOf(x + dir), syOf(n.y));
+        ctx.fillText('●', sxOf(x + dir) - cw * 0.15, syOf(n.y) - ch * 0.35);
+        ctx.font = `${this.size}px ${FONT}`;
       }
       if (n.npc === 'hermit') {
-        // A small fire and a mushroom patch: a life built by hand.
         ctx.fillStyle = Math.random() < 0.5 ? '#ff7a1f' : '#ffdf5a';
         ctx.fillText(['^', '*', '"', '^'][Math.floor(now / 140) % 4], sxOf(n.x - 3), syOf(n.y));
         ctx.fillStyle = '#d98cff';
@@ -224,67 +324,77 @@ export class AsciiView {
         }
         ctx.globalAlpha = 1;
       }
-      if (n.npc === 'madman' && Math.random() < 0.9) {
-        ctx.fillStyle = '#ffdf5a';
-        ctx.fillText('*', sxOf(x + 1), syOf(n.y) - this.size * 0.25);
+      let top = syOf(n.y);
+      if (c.mini) {
+        top = drawMiner(ctx, sxOf(x) + cw / 2, syOf(n.y) + ch, ch, { npc: n.npc, facing, now, fit: cw }).top;
+      } else {
+        ctx.font = `800 ${this.size}px ${FONT}`;
+        ctx.fillStyle = c.color;
+        ctx.shadowColor = c.color;
+        ctx.shadowBlur = n.npc === 'mirror' ? 10 + 6 * Math.sin(now / 300) : 6;
+        ctx.fillText(c.glyph, sxOf(x), syOf(n.y));
+        ctx.shadowBlur = 0;
+        ctx.font = `${this.size}px ${FONT}`;
       }
-      ctx.font = `800 ${this.size}px ${FONT}`;
-      ctx.fillStyle = c.color;
-      ctx.shadowColor = c.color;
-      ctx.shadowBlur = n.npc === 'mirror' ? 10 + 6 * Math.sin(now / 300) : 6;
-      ctx.fillText(c.glyph, sxOf(x), syOf(n.y));
-      ctx.shadowBlur = 0;
-      ctx.font = `${Math.round(this.size * 0.55)}px ${FONT}`;
-      ctx.textAlign = 'center';
       const near = self && Math.abs(self.x - n.x) + Math.abs(self.y - n.y) <= 2;
-      ctx.fillText(near ? '[F] talk' : c.name.toLowerCase(), sxOf(x) + cw / 2, syOf(n.y) - this.size * 0.6);
-      ctx.textAlign = 'left';
-      ctx.font = `${this.size}px ${FONT}`;
+      this.drawLabel(near ? '[F] talk' : c.name.toLowerCase(), sxOf(x) + cw / 2, top - 2, near ? '#ffffff' : c.color, near ? 1 : 0.75);
     }
   }
 
   drawPlayers(S, sxOf, syOf, now) {
     const { ctx, cw, ch } = this;
     for (const p of S.players.values()) {
+      if (p.rx == null) continue;
       const me = p.id === S.you;
-      let sx = sxOf(p.rx), sy = syOf(p.ry);
-      if (p.act === 2) { sx += (Math.random() - 0.5) * 2; sy += (Math.random() - 0.5) * 2; }
-      // Thruster flame when flying up / hovering
-      if (p.dir === 3 && (p.act === 1 || p.act === 0)) {
-        ctx.fillStyle = Math.random() < 0.5 ? '#ffa21f' : '#ffdf5a';
-        ctx.fillText(Math.random() < 0.5 ? '*' : '^', sx, sy + ch * 0.8);
-      }
+      const sx = sxOf(p.rx), sy = syOf(p.ry);
+      if (p.dir === 1) p.facing = -1;
+      else if (p.dir === 2) p.facing = 1;
+      const tile = (x, y) => S.tiles[y * W + x];
+      const onLadder = tile(p.x, p.y) === T.LADDER;
+      const wall = (x) => !C.passable(tile(x, p.y));
+      const fly = p.dir === 3 && !onLadder && (p.act === 1 || (p.act === 0 && !wall(p.x - 1) && !wall(p.x + 1) && C.passable(tile(p.x, p.y + 1))));
+      const moving = Math.abs(p.rx - p.x) + Math.abs(p.ry - p.y) > 0.05 && p.act !== 3;
+      const res = drawMiner(ctx, sx + cw / 2, sy + ch, ch, {
+        look: p.look ?? { color: p.color }, fit: cw, facing: p.facing ?? 1, now, fly,
+        walk: moving && !fly ? now / 140 : null,
+        dig: p.act === 2 ? ['', 'L', 'R', 'U', 'D'][p.dir] : null,
+        drill: me ? S.me?.u?.drill ?? 0 : 0,
+        tired: me && S.mode === 'solo' ? (S.me?.t ?? 0) / 130 : 0,
+      });
       if (p.act === 2) {
         const [dx, dy] = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]][p.dir] ?? [0, 0];
         ctx.fillStyle = '#ffdf5a';
         for (let k = 0; k < 2; k++) {
-          ctx.fillText(SPARKS[Math.floor(Math.random() * SPARKS.length)], sx + dx * cw * 0.7 + (Math.random() - 0.5) * cw, sy + dy * ch * 0.7 + (Math.random() - 0.5) * ch);
+          ctx.fillText(SPARKS[Math.floor(Math.random() * SPARKS.length)], sx + dx * cw * 0.8 + (Math.random() - 0.5) * cw, sy + dy * ch * 0.8 + (Math.random() - 0.5) * ch);
         }
       }
-      ctx.font = `800 ${this.size}px ${FONT}`;
-      ctx.fillStyle = p.color;
-      if (me) { ctx.shadowColor = p.color; ctx.shadowBlur = 12; }
-      ctx.fillText('@', sx, sy);
-      ctx.shadowBlur = 0;
-      ctx.font = `${this.size}px ${FONT}`;
-      if (!me && !S.host) {
-        ctx.font = `${Math.round(this.size * 0.55)}px ${FONT}`;
+      let above = res.top - 2;
+      if (!me && !S.host) { this.drawLabel(p.name, sx + cw / 2, above, p.color); above -= this.size * 0.55; }
+      const thought = me && S.thought && S.thought.until > now ? S.thought : null;
+      if (thought) {
+        const a = Math.min(1, (thought.until - now) / 800);
+        ctx.font = `italic ${Math.round(this.size * 0.6)}px ${FONT}`;
         ctx.textAlign = 'center';
-        ctx.globalAlpha = 0.85;
-        ctx.fillText(p.name, sx + cw / 2, sy - this.size * 0.6);
+        ctx.textBaseline = 'bottom';
+        ctx.globalAlpha = 0.85 * a;
+        ctx.fillStyle = '#c9d6cc';
+        ctx.fillText(`( ${thought.text} )`, sx + cw / 2, above - 4);
         ctx.globalAlpha = 1;
         ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
         ctx.font = `${this.size}px ${FONT}`;
       }
       if (p.say && p.say.until > now) {
         ctx.font = `${Math.round(this.size * 0.6)}px ${FONT}`;
         ctx.textAlign = 'center';
-        const text = `"${p.say.text}"`, tw = ctx.measureText(text).width + 10;
+        ctx.textBaseline = 'bottom';
+        const text = `"${p.say.text}"`, tw = ctx.measureText(text).width + 10, h = this.size * 0.8;
         ctx.fillStyle = 'rgba(0,0,0,0.75)';
-        ctx.fillRect(sx + cw / 2 - tw / 2, sy - this.size * 1.55, tw, this.size * 0.8);
+        ctx.fillRect(sx + cw / 2 - tw / 2, above - h - 2, tw, h);
         ctx.fillStyle = '#e8ffe9';
-        ctx.fillText(text, sx + cw / 2, sy - this.size * 1.5);
+        ctx.fillText(text, sx + cw / 2, above - 3);
         ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
         ctx.font = `${this.size}px ${FONT}`;
       }
     }
