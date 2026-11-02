@@ -1,5 +1,3 @@
-# Production: DEEP behind Caddy (automatic HTTPS + WebSockets).
-# On the server: create .env with DOMAIN=... and ADMIN_KEY=..., then `docker compose up -d --build`.
 services:
   deep:
     build: .
@@ -7,23 +5,57 @@ services:
     environment:
       - PORT=8080
       - DATA_DIR=/data
-      - PUBLIC_URL=https://${DOMAIN}
-      - ADMIN_KEY=${ADMIN_KEY}
+      - TRUST_PROXY=1
+      - PUBLIC_URL=${PUBLIC_URL:-}
+      - ADMIN_KEY=${ADMIN_KEY:-}
     volumes:
       - deep-data:/data
+    networks:
+      - game-only
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 100
+  cloudflared:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://deep:8080
+    networks:
+      - game-only
+      - internet
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - deep
   caddy:
+    profiles: [domain]
     image: caddy:2
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     environment:
-      - DOMAIN=${DOMAIN}
+      - DOMAIN=${DOMAIN:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
+    networks:
+      - game-only
+      - internet
     depends_on:
       - deep
 volumes:
   deep-data:
   caddy-data:
+networks:
+  game-only:
+    internal: true
+  internet:

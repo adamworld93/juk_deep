@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import * as C from '../shared/config.js';
 import { World } from './world.js';
 import { sanitizeLook } from '../shared/looks.js';
+import { failedLogins, newAccounts } from './limits.js';
 import { BEATS, beatById, CHARACTERS, SITES, TOWN_NPCS, THOUGHTS, SCRAPS, HINTS, MEETS, visible, lineText } from '../shared/story.js';
 
 const { T, TILES, W, H, SURFACE } = C;
@@ -22,6 +23,7 @@ const RELIVED = /^(tomas-gone|carrying-tomas|carried-letter|added-note|writing-h
 const rand = (a, b) => a + Math.random() * (b - a);
 // Look up a key a client sent, ignoring anything inherited ("toString", "__proto__"…).
 const own = (obj, k) => (typeof k === 'string' && Object.hasOwn(obj, k) ? obj[k] : undefined);
+const MAX_COMMONS_ACCOUNTS = 2000;
 const hashPin = (key, pin) => crypto.createHash('sha256').update(`deep:${key}:${pin}`).digest('hex');
 const r1 = (v) => Math.round(v * 10) / 10;
 
@@ -221,16 +223,28 @@ export class Game {
       }
       const look = sanitizeLook(m.look);
       let p = this.accounts.get(key);
-      if (p && p.pin !== hashPin(key, pin)) {
+      const loginKey = `${this.mode}:${key}`;
+      const isLoginLocked = !!p && failedLogins.isBlocked(loginKey);
+      if (p && (isLoginLocked || p.pin !== hashPin(key, pin))) {
+        if (!isLoginLocked) failedLogins.record(loginKey);
         // Someone else owns this name: suggest a free variant instead of leaving the player stuck.
         let n = 2, suggest;
         do suggest = `${name.slice(0, 12)}${n++}`; while (this.accounts.has(suggest.toLowerCase()));
         return this.send(conn, {
           t: 'error', suggest,
-          text: `"${name}" is already taken by another miner. Enter its PIN to continue that save, or play as "${suggest}" — just press DIG IN.`,
+          text: isLoginLocked
+            ? `Too many wrong PINs for "${name}". Try again in 15 minutes, or play as "${suggest}" — just press DIG IN.`
+            : `"${name}" is already taken by another miner. Enter its PIN to continue that save, or play as "${suggest}" — just press DIG IN.`,
         });
       }
+      if (p) failedLogins.clear(loginKey);
       if (!p) {
+        if (this.mode === 'world') {
+          if (this.accounts.size >= MAX_COMMONS_ACCOUNTS || newAccounts.isBlocked(conn.address)) {
+            return this.send(conn, { t: 'error', text: 'Too many new miners right now. Try again later.' });
+          }
+          newAccounts.record(conn.address);
+        }
         p = { name, key, pin: hashPin(key, pin), color: look.color, look, ...this.newCareer(), ...this.spawnPoint(), difficulty: C.economy(m.difficulty).key };
         this.accounts.set(key, p);
       }

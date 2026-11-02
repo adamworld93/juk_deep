@@ -45,22 +45,34 @@ Open `http://localhost:3000/?host` for the big-screen view: a map of the mine, a
 | `EVENT_SCALE` | `1` | Multiplier for the time between world events |
 | `ADMIN_KEY` | none | Enables world reset at `/?host&key=<ADMIN_KEY>` |
 | `PUBLIC_URL` | none | URL in the host QR code; defaults to the LAN address |
+| `TRUST_PROXY` | off | Set to `1` only behind a proxy, to read client addresses from `X-Forwarded-For` |
+| `MAX_CONNECTIONS_PER_ADDRESS` | `30` | Connection limit per client address |
 
 Game balance is in [`shared/config.js`](shared/config.js).
 
 ## Deploy
 
+The game container runs as a non-root user with no outbound network access. The world lives in memory, so run a single instance.
+
+With a random `trycloudflare.com` address, which changes when the tunnel restarts:
+
+```bash
+docker compose --profile tunnel up -d --build
+docker compose logs cloudflared | grep trycloudflare.com
+```
+
+With your own domain and automatic HTTPS, create a `.env` file and start Caddy:
+
 ```bash
 # .env
 DOMAIN=example.com
+PUBLIC_URL=https://example.com
 ADMIN_KEY=change-me
 ```
 
 ```bash
-docker compose up -d --build
+docker compose --profile domain up -d --build
 ```
-
-This runs the game behind Caddy with automatic HTTPS. The world lives in memory, so run a single instance.
 
 ## Layout
 
@@ -68,6 +80,7 @@ This runs the game behind Caddy with automatic HTTPS. The world lives in memory,
 server/index.js   HTTP and WebSocket server
 server/game.js    Simulation, economy, events and story logic for one mine
 server/world.js   World generation and chunk encoding
+server/limits.js  Login and new-account rate limits
 shared/           Game config, story content and miner looks, used by server and client
 public/           Browser client
 scripts/          Load test and playtime estimate

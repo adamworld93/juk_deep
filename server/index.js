@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { existsSync, readdirSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,11 +7,19 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import QRCode from 'qrcode';
 import { Game } from './game.js';
+import { newAccounts } from './limits.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.DATA_DIR ?? path.join(ROOT, 'data');
 const STATIC = [['/shared/', path.join(ROOT, 'shared')], ['/', path.join(ROOT, 'public')]];
+const SHOULD_TRUST_PROXY_HEADERS = process.env.TRUST_PROXY === '1';
+const MAX_CONNECTIONS = 200;
+// Generous, because a whole event can share one Wi-Fi address.
+const MAX_CONNECTIONS_PER_ADDRESS = Number(process.env.MAX_CONNECTIONS_PER_ADDRESS ?? 30);
+const MAX_MESSAGES_PER_SECOND = 60;
+const MAX_LOADED_STORY_WORLDS = 30;
+const MAX_STORY_SAVES = 500;
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json',
@@ -25,21 +34,45 @@ function lanUrls() {
 const game = new Game({ saveFile: path.join(DATA_DIR, 'world.json') });
 
 const solos = new Map();
-function soloFor(name) {
+// Returns { story } or, when the world can't be opened, { refusal } with the reason.
+function soloFor(name, address) {
   const key = String(name ?? '').replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 14).toLowerCase();
-  if (key.length < 2) return null;
+  if (key.length < 2) return { refusal: 'Pick a name (2+ characters).' };
   let g = solos.get(key);
   if (!g) {
+    if (solos.size >= MAX_LOADED_STORY_WORLDS) return { refusal: 'The server is busy. Try again in a minute.' };
+    const soloDirectory = path.join(DATA_DIR, 'solo');
+    const saveFile = path.join(soloDirectory, `${encodeURIComponent(key)}.json`);
+    if (!existsSync(saveFile)) {
+      const storySaveCount = existsSync(soloDirectory) ? readdirSync(soloDirectory).length : 0;
+      if (storySaveCount >= MAX_STORY_SAVES || newAccounts.isBlocked(address)) {
+        return { refusal: 'Too many new miners right now. Try again later.' };
+      }
+      newAccounts.record(address);
+    }
     g = new Game({
       mode: 'solo',
-      saveFile: path.join(DATA_DIR, 'solo', `${encodeURIComponent(key)}.json`),
+      saveFile,
       onEmpty: () => setTimeout(() => {
         if (g.conns.size === 0 && solos.get(key) === g) { g.dispose(); solos.delete(key); }
       }, 30_000),
     });
     solos.set(key, g);
   }
-  return g;
+  return { story: g };
+}
+
+// With TRUST_PROXY=1 the proxy appends the real client address as the last X-Forwarded-For entry;
+// anything before it is client-supplied.
+function clientAddressOf(req) {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (SHOULD_TRUST_PROXY_HEADERS && forwardedFor) return String(forwardedFor).split(',').pop().trim();
+  return req.socket.remoteAddress;
+}
+
+// The host page only uses LAN addresses when it was opened on localhost; nobody else gets them.
+function isLoopbackHost(req) {
+  return /^(localhost|127\.)/.test(String(req.headers.host ?? ''));
 }
 
 // Lets other sites (e.g. an event platform) fetch or embed the game.
@@ -98,7 +131,7 @@ async function handle(req, res) {
   } else if (url.pathname === '/api/info') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
-      publicUrl: process.env.PUBLIC_URL ?? null, lan: lanUrls(),
+      publicUrl: process.env.PUBLIC_URL ?? null, lan: isLoopbackHost(req) ? lanUrls() : [],
       online: game.players.size, max: Game.MAX_PLAYERS, storyPlayers: solos.size,
     }));
   } else if (url.pathname === '/healthz') {
@@ -110,18 +143,36 @@ async function handle(req, res) {
 }
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 4096, perMessageDeflate: { threshold: 1024 } });
-wss.on('connection', (ws) => {
-  const conn = { ws, player: null, host: false, chunks: new Set(), joined: false };
+const connectionCountByAddress = new Map();
+wss.on('connection', (ws, req) => {
+  const address = clientAddressOf(req);
+  const connectionCount = connectionCountByAddress.get(address) ?? 0;
+  if (wss.clients.size > MAX_CONNECTIONS || connectionCount >= MAX_CONNECTIONS_PER_ADDRESS) {
+    ws.send(JSON.stringify({ t: 'error', text: 'Too many connections. Try again later.' }));
+    ws.close(1013, 'too many connections');
+    return;
+  }
+  connectionCountByAddress.set(address, connectionCount + 1);
+  const conn = { ws, address, player: null, host: false, chunks: new Set(), joined: false };
   let target = null;
+  let messageWindowStartedAt = 0;
+  let messageCountInWindow = 0;
   ws.on('message', (data) => {
+    const now = Date.now();
+    if (now - messageWindowStartedAt >= 1000) { messageWindowStartedAt = now; messageCountInWindow = 0; }
+    if (++messageCountInWindow > MAX_MESSAGES_PER_SECOND) { ws.close(1008, 'too many messages'); return; }
     let m;
     try { m = JSON.parse(data); } catch { return; }
     if (!m || typeof m !== 'object') return;
     try {
       if (target) return target.onMessage(conn, m);
       if (m.t !== 'join') return;
-      const g = m.mode === 'solo' && !m.host ? soloFor(m.name) : game;
-      if (!g) return ws.send(JSON.stringify({ t: 'error', text: 'Pick a name (2+ characters).' }));
+      let g = game;
+      if (m.mode === 'solo' && !m.host) {
+        const { story, refusal } = soloFor(m.name, address);
+        if (refusal) return ws.send(JSON.stringify({ t: 'error', text: refusal }));
+        g = story;
+      }
       g.join(conn, m);
       if (conn.joined) target = g;
       // A failed login (wrong PIN…) must not leave a story world loaded with nobody in it.
@@ -130,7 +181,12 @@ wss.on('connection', (ws) => {
       console.error('message failed:', m?.t, e);
     }
   });
-  ws.on('close', () => target?.leave(conn));
+  ws.on('close', () => {
+    target?.leave(conn);
+    const remainingConnections = connectionCountByAddress.get(address) - 1;
+    if (remainingConnections > 0) connectionCountByAddress.set(address, remainingConnections);
+    else connectionCountByAddress.delete(address);
+  });
   ws.on('error', () => {});
 });
 

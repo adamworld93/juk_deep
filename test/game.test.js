@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Game } from '../server/game.js';
+import { AttemptLimiter, LOGIN_ATTEMPTS_BEFORE_LOCK } from '../server/limits.js';
 import * as C from '../shared/config.js';
 import { BEATS, SCRAPS, THOUGHTS } from '../shared/story.js';
 
@@ -326,4 +327,34 @@ test('story length sets prices and when story moments land; one moment per payda
   }
   assert.ok(lengths.short.price < lengths.normal.price && lengths.normal.price < lengths.long.price);
   assert.ok(lengths.short.joDies < lengths.normal.joDies && lengths.normal.joDies < lengths.long.joDies);
+});
+
+test('wrong PINs lock a name for 15 minutes, even with the right PIN, then it opens again', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  const { g, sent } = setup('world');
+  g.leave(g.players.values().next().value.conn);
+  const attempt = (pin) => {
+    const conn = { ws: { readyState: 1, bufferedAmount: 0, send: (s) => sent.push(JSON.parse(s)), close() {} }, player: null, chunks: new Set(), joined: false };
+    sent.length = 0;
+    g.join(conn, { t: 'join', name: 'Tester', pin });
+    return { conn, error: sent.find((m) => m.t === 'error')?.text };
+  };
+  for (let i = 0; i < LOGIN_ATTEMPTS_BEFORE_LOCK; i++) assert.match(attempt('9999').error, /already taken/);
+  const locked = attempt('1234');
+  assert.match(locked.error, /Too many wrong PINs/);
+  assert.equal(locked.conn.player, null);
+  t.mock.timers.tick(15 * 60 * 1000 + 1);
+  assert.ok(attempt('1234').conn.player);
+});
+
+test('a limiter blocks at its maximum, per key, until the window ends', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  const limiter = new AttemptLimiter(2, 1000);
+  limiter.record('a');
+  assert.equal(limiter.isBlocked('a'), false);
+  limiter.record('a');
+  assert.equal(limiter.isBlocked('a'), true);
+  assert.equal(limiter.isBlocked('b'), false);
+  t.mock.timers.tick(1001);
+  assert.equal(limiter.isBlocked('a'), false);
 });
