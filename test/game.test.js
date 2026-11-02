@@ -74,6 +74,28 @@ test('a tap shorter than a tick still moves one cell', () => {
   assert.equal(p.x, 49);
 });
 
+test('digging needs the button held: tapping or letting go early breaks nothing', () => {
+  const { g, p, w } = setup();
+  cave(g, p);
+  const startY = p.y;
+  g.onMessage(p.conn, { t: 'in', d: 'D' });
+  g.onMessage(p.conn, { t: 'in', d: '' });
+  run(g, 3);
+  assert.equal(p.y, startY);
+  assert.notEqual(w.get(p.x, startY + 1), T.AIR);
+  for (let i = 0; i < 40; i++) {
+    g.onMessage(p.conn, { t: 'in', d: 'D' });
+    g.update();
+    g.onMessage(p.conn, { t: 'in', d: '' });
+    g.update();
+  }
+  assert.equal(p.y, startY);
+  assert.notEqual(w.get(p.x, startY + 1), T.AIR);
+  g.onMessage(p.conn, { t: 'in', d: 'D' });
+  run(g, 3);
+  assert.ok(p.y > startY);
+});
+
 test('the pause menu freezes the story', () => {
   const { g, p } = setup();
   cave(g, p);

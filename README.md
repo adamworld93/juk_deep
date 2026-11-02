@@ -26,7 +26,8 @@ Open `http://localhost:3000/?host` for the big-screen view: a map of the mine, a
 
 | Action | Desktop | Phone |
 |---|---|---|
-| Walk / dig | WASD or arrows | D-pad |
+| Walk | WASD or arrows | D-pad |
+| Dig (letting go cancels it) | Hold WASD or arrows | Hold D-pad |
 | Climb, or fly using fuel | Hold ↑ | Hold ▲ |
 | Use building | F | F button |
 | Dynamite, teleporter, repair kit, fuel can, ladder | 1 2 3 4 5 | Item buttons |

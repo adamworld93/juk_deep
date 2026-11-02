@@ -806,6 +806,7 @@ export class Game {
     }
     this.wear(p);
     let carry = 0;
+    if (p.act?.type === 'dig' && p.dir !== p.act.d) p.act = null;
     if (p.act) {
       p.act.t -= C.DT;
       if (p.act.t > 0) return;
@@ -884,6 +885,7 @@ export class Game {
     }
     const def = TILES[t];
     if (def.hard > st.power) return this.tell(p, `${def.name ?? def.key} is too hard — upgrade your drill.`, 'hard');
+    if (p.dir !== dir) return; // a tap walks one cell, but digging takes a held button
     const weary = this.mode === 'solo' ? 1 + (p.tired / 100) ** 2 * 0.8 : 1; // tired hands dig slower
     const dur = ((C.DIG_TIME * def.hard) / st.speed) * weary + C.DIG_BASE;
     if (this.mode === 'solo' && p.trip && !p.trip.dug) { p.trip.dug = true; this.think(p, 'firstDig'); }
